@@ -3,108 +3,92 @@ import random
 import pandas as pd
 
 # --- Configuration ---
-st.set_page_config(page_title="Pro Bingo", layout="wide", page_icon="🎰")
+st.set_page_config(page_title="Classroom Bingo", layout="centered")
 
-def initialize_game(size):
-    """Initializes the game state based on selected size."""
-    # Define Column Headers and Ranges
-    if size == 5:
-        cols = ['B', 'I', 'N', 'G', 'O']
-        max_val = 75
-    else:
-        # For 7x7, we add more letters and increase the range
-        cols = ['B', 'I', 'N', 'G', 'O', 'X', 'Z']
-        max_val = 98
+# --- SHARED DATA (The "Cloud" for your app) ---
+# We use cache_resource so both you and your friend see the SAME data.
+@st.cache_resource
+def get_shared_state():
+    return {
+        "drawn_numbers": [],
+        "game_id": 0
+    }
+
+shared_state = get_shared_state()
+
+def initialize_board(size):
+    """Generates a board for the individual user."""
+    max_val = size * size
+    nums = list(range(1, max_val + 1))
+    random.shuffle(nums)
     
-    # Calculate unique number ranges for each column
-    step = max_val // size
-    board_data = {}
+    # Create a square grid
+    rows = [nums[i:i + size] for i in range(0, len(nums), size)]
+    df = pd.DataFrame(rows).astype(object)
     
-    for i, char in enumerate(cols):
-        start = (i * step) + 1
-        end = (i + 1) * step + 1
-        board_data[char] = random.sample(range(start, end), size)
-    
-    # FIX: .astype(object) prevents the TypeError when inserting "FREE"
-    df = pd.DataFrame(board_data).astype(object)
-    
-    # Set Free Space in the exact middle
+    # Set Free Space
     mid = size // 2
     df.iloc[mid, mid] = "FREE"
     
-    # Update Session State
-    st.session_state.board = df
-    st.session_state.drawn_numbers = []
-    st.session_state.all_numbers = list(range(1, max_val + 1))
-    random.shuffle(st.session_state.all_numbers)
-    st.session_state.current_size = size
+    return df
 
-# --- Sidebar ---
+# --- User-Specific Session State ---
+if 'my_board' not in st.session_state:
+    st.session_state.my_board = None
+    st.session_state.my_size = 5
+
+# --- Sidebar Controls ---
 with st.sidebar:
-    st.header("Game Settings")
-    board_size = st.radio("Choose Layout", [5, 7], index=0, help="5x5 uses numbers 1-75. 7x7 uses 1-98.")
+    st.header("Game Setup")
+    selected_size = st.radio("Grid Size", [5, 7], index=0)
     
-    if st.button("Start New Game", type="primary", use_container_width=True):
-        initialize_game(board_size)
+    if st.button("Generate My Board"):
+        st.session_state.my_board = initialize_board(selected_size)
+        st.session_state.my_size = selected_size
+
+    if st.button("🔥 RESET SERVER (New Game)"):
+        shared_state["drawn_numbers"] = []
+        shared_state["game_id"] += 1
         st.rerun()
+
+# --- Main UI ---
+st.title("🏫 Classroom Bingo")
+st.write("Both players see the same numbers drawn!")
+
+# Drawing Logic
+if st.button("🎯 DRAW NUMBER", type="primary", use_container_width=True):
+    max_possible = st.session_state.my_size * st.session_state.my_size
+    possible_nums = [n for n in range(1, max_possible + 1) if n not in shared_state["drawn_numbers"]]
     
-    st.divider()
-    st.info("The middle square is a FREE space. Numbers will turn green when they match a call!")
-
-# --- Initialize on First Run ---
-if 'board' not in st.session_state or st.session_state.get('current_size') != board_size:
-    initialize_game(board_size)
-
-# --- Game Logic ---
-def draw_number():
-    if st.session_state.all_numbers:
-        new_num = st.session_state.all_numbers.pop()
-        st.session_state.drawn_numbers.append(new_num)
+    if possible_nums:
+        new_num = random.choice(possible_nums)
+        shared_state["drawn_numbers"].append(new_num)
+        st.rerun()
     else:
-        st.balloons()
-        st.error("All numbers have been called!")
+        st.error("All numbers drawn!")
 
-# --- Main Interface ---
-st.title(f"🎰 {st.session_state.current_size}x{st.session_state.current_size} Bingo")
+# Display Latest Call
+if shared_state["drawn_numbers"]:
+    last_call = shared_state["drawn_numbers"][-1]
+    st.markdown(f"<h1 style='text-align: center; color: red;'>{last_call}</h1>", unsafe_allow_html=True)
 
-col_left, col_right = st.columns([3, 2])
-
-with col_left:
-    # Cell Styling Logic
+# Display Your Board
+if st.session_state.my_board is not None:
+    st.subheader("Your Unique Board")
+    
     def style_cells(val):
-        if val == "FREE" or val in st.session_state.drawn_numbers:
-            return 'background-color: #2E7D32; color: white; font-weight: bold; font-size: 20px; text-align: center;'
-        return 'text-align: center; font-size: 18px;'
+        if val == "FREE" or val in shared_state["drawn_numbers"]:
+            return 'background-color: #4CAF50; color: white; border: 2px solid white;'
+        return 'background-color: #f0f2f6;'
 
-    # Using .map for newer Pandas versions (replaces applymap)
-    st.table(st.session_state.board.style.map(style_cells))
+    st.table(st.session_state.my_board.style.map(style_cells))
+else:
+    st.info("Click 'Generate My Board' in the sidebar to start!")
 
-with col_right:
-    st.subheader("Caller's Desk")
-    
-    if st.button("🎯 Draw Next Number", use_container_width=True):
-        draw_number()
-    
-    # Display Current Number
-    if st.session_state.drawn_numbers:
-        current = st.session_state.drawn_numbers[-1]
-        st.markdown(f"""
-            <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; text-align:center;">
-                <h1 style="margin:0; color:#ff4b4b;">{current}</h1>
-                <p style="margin:0; color:#555;">Latest Call</p>
-            </div>
-        """, unsafe_allow_html=True)
-    
-    st.write("---")
-    
-    # Call History
-    st.write("**Call History (Recent First):**")
-    history = st.session_state.drawn_numbers[::-1]
-    st.write(", ".join(map(str, history)) if history else "No numbers called yet.")
+# Draw History
+with st.expander("Show History"):
+    st.write(shared_state["drawn_numbers"])
 
-# --- Winner Check (Bonus Feature) ---
-# This checks if the user clicks it, just for fun!
-if st.button("Check for Bingo?"):
-    st.toast("Checking your board...", icon="🔍")
-    # You can expand logic here to auto-detect rows/cols/diagonals
-    st.write("Keep playing until you see a line!")
+# Auto-refresh helper
+if st.button("🔄 Sync/Refresh"):
+    st.rerun()
