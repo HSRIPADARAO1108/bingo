@@ -1,94 +1,87 @@
 import streamlit as st
-import random
 import pandas as pd
+import random
 
-# --- Configuration ---
+# --- Shared Server State ---
+# This dictionary is shared across all users who open the app link
+@st.cache_resource
+def get_shared_game_data():
+    return {"called_numbers": set()}
+
+shared_data = get_shared_game_data()
+
+# --- App Setup ---
 st.set_page_config(page_title="Classroom Bingo", layout="centered")
 
-# --- SHARED DATA (The "Cloud" for your app) ---
-# We use cache_resource so both you and your friend see the SAME data.
-@st.cache_resource
-def get_shared_state():
-    return {
-        "drawn_numbers": [],
-        "game_id": 0
-    }
-
-shared_state = get_shared_state()
-
-def initialize_board(size):
-    """Generates a board for the individual user."""
-    max_val = size * size
+# --- Functions ---
+def create_board(size):
+    max_val = 25 if size == 5 else 49
     nums = list(range(1, max_val + 1))
     random.shuffle(nums)
     
-    # Create a square grid
-    rows = [nums[i:i + size] for i in range(0, len(nums), size)]
-    df = pd.DataFrame(rows).astype(object)
+    # Reshape into grid
+    grid = [nums[i:i + size] for i in range(0, len(nums), size)]
+    df = pd.DataFrame(grid).astype(object)
     
-    # Set Free Space
+    # Middle Free Space
     mid = size // 2
     df.iloc[mid, mid] = "FREE"
-    
     return df
 
-# --- User-Specific Session State ---
-if 'my_board' not in st.session_state:
+# --- Session State (Your specific phone) ---
+if "my_board" not in st.session_state:
     st.session_state.my_board = None
-    st.session_state.my_size = 5
+    st.session_state.size = 5
 
-# --- Sidebar Controls ---
+# --- Sidebar ---
 with st.sidebar:
-    st.header("Game Setup")
-    selected_size = st.radio("Grid Size", [5, 7], index=0)
-    
+    st.header("1. Setup Board")
+    size_choice = st.radio("Choose Size", [5, 7])
     if st.button("Generate My Board"):
-        st.session_state.my_board = initialize_board(selected_size)
-        st.session_state.my_size = selected_size
-
-    if st.button("🔥 RESET SERVER (New Game)"):
-        shared_state["drawn_numbers"] = []
-        shared_state["game_id"] += 1
+        st.session_state.size = size_choice
+        st.session_state.my_board = create_board(size_choice)
         st.rerun()
-
-# --- Main UI ---
-st.title("🏫 Classroom Bingo")
-st.write("Both players see the same numbers drawn!")
-
-# Drawing Logic
-if st.button("🎯 DRAW NUMBER", type="primary", use_container_width=True):
-    max_possible = st.session_state.my_size * st.session_state.my_size
-    possible_nums = [n for n in range(1, max_possible + 1) if n not in shared_state["drawn_numbers"]]
     
-    if possible_nums:
-        new_num = random.choice(possible_nums)
-        shared_state["drawn_numbers"].append(new_num)
+    st.divider()
+    if st.button("⚠️ Clear All Numbers (New Game)"):
+        shared_data["called_numbers"].clear()
         st.rerun()
-    else:
-        st.error("All numbers drawn!")
 
-# Display Latest Call
-if shared_state["drawn_numbers"]:
-    last_call = shared_state["drawn_numbers"][-1]
-    st.markdown(f"<h1 style='text-align: center; color: red;'>{last_call}</h1>", unsafe_allow_html=True)
+# --- Main Game ---
+st.title("🤝 Peer-to-Peer Bingo")
+st.write(f"Playing **1 to {25 if st.session_state.size == 5 else 49}**")
 
-# Display Your Board
+# Input Section
+st.subheader("2. Call a Number")
+col1, col2 = st.columns([3, 1])
+with col1:
+    num_input = st.number_input("Type number called:", min_value=1, 
+                                max_value=(25 if st.session_state.size == 5 else 49), 
+                                key="input_box")
+with col2:
+    if st.button("Add Number", use_container_width=True):
+        shared_data["called_numbers"].add(int(num_input))
+        st.rerun()
+
+# Display Called Numbers
+st.write(f"**Numbers Called so far:** {sorted(list(shared_data['called_numbers']))}")
+
+st.divider()
+
+# Display Board
 if st.session_state.my_board is not None:
-    st.subheader("Your Unique Board")
+    st.subheader("3. Your Board")
     
-    def style_cells(val):
-        if val == "FREE" or val in shared_state["drawn_numbers"]:
-            return 'background-color: #4CAF50; color: white; border: 2px solid white;'
-        return 'background-color: #f0f2f6;'
+    def highlight_match(val):
+        if val == "FREE" or val in shared_data["called_numbers"]:
+            return 'background-color: #ff4b4b; color: white; font-weight: bold; border: 1px solid white'
+        return 'background-color: #262730; color: #FAFAFA'
 
-    st.table(st.session_state.my_board.style.map(style_cells))
+    # Show the table
+    st.table(st.session_state.my_board.style.map(highlight_match))
+    
+    # Sync Button
+    if st.button("🔄 Sync with Friend"):
+        st.rerun()
 else:
-    st.info("Click 'Generate My Board' in the sidebar to start!")
-
-# Draw History
-with st.expander("Show History"):
-    st.write(shared_state["drawn_numbers"])
-
-# Auto-refresh helper
-if st.button("🔄 Sync/Refresh"):
-    st.rerun()
+    st.info("Click 'Generate My Board' in the sidebar to start.")
